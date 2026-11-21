@@ -376,6 +376,10 @@ def build():
               "SCOTLAND · ABERDEEN",
               ["ENTRY · 12 NOV 2026", "Leave to enter: 90 days"], tilt=5)
 
+    # pencilled harbour note -- a small observed detail
+    d.text((544, 584), "Harbour note, in pencil: met M. at the quay — cod, not haddock.",
+           font=F_TXT, fill=MUTE)
+
     # endorsement -- the telling detail
     d.rectangle([544, 622, 994, 772], outline=RULE_C, width=1)
     d.rectangle([544, 622, 994, 650], fill=(233, 227, 207))
