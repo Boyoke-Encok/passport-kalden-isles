@@ -1,290 +1,297 @@
 #!/usr/bin/env python3
 """The Passport Page of a Country That Isn't There (make.fun).
 
-Draws one 1024x1024 PNG: an open passport spread of the invented
-Republic of the Kalden Isles (a small North Atlantic archipelago).
-Left page: data page with portrait, bilingual (Kalden/English) fields
-and a machine-readable zone with real ICAO check digits.
-Right page: visa/stamps page with a travel history that agrees with
-the issue date, plus the telling endorsement: inter-island ferry toll
-exemption and visa-free travel to the neighbouring Nordic states.
+Renders a single 1024x1024 PNG: an open passport spread for the
+invented Republic of the Kalden Isles, a small North Atlantic
+archipelago.  The left leaf is the data page (vector portrait,
+bilingual Kalden/English fields, machine-readable zone with genuine
+ICAO check digits).  The right leaf is the visas leaf: entry/exit
+stamps from neighbouring Nordic ports, a transit visa, and the
+endorsement that gives the place away -- inter-island ferry tolls
+are free for holders, and they travel visa-free around the North
+Atlantic, provided they declare any fish they land abroad.
 
-Own code, written fresh. Deterministic: fixed geometry, no randomness,
-no network. Fonts: DejaVu / Liberation from the system font dir.
+Written from scratch for this session.  Deterministic, no network,
+no randomness; only Pillow and the system DejaVu / Liberation fonts.
 """
 import math
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1024, 1024
-OUT = "/output/entry.png"
+SIZE = 1024
+OUT = os.environ.get("ENTRY_OUT", "/output/entry.png")
 
-FD = "/usr/share/fonts/truetype/dejavu"
-FL = "/usr/share/fonts/truetype/liberation"
-
-
-def font(path, size):
-    return ImageFont.truetype(path, size)
+DEJAVU = "/usr/share/fonts/truetype/dejavu"
+LIBER = "/usr/share/fonts/truetype/liberation"
 
 
-F_TITLE = font(f"{FD}/DejaVuSerif-Bold.ttf", 20)
-F_SUB = font(f"{FD}/DejaVuSerif-Bold.ttf", 15)
-F_HEAD = font(f"{FD}/DejaVuSans-Bold.ttf", 13)
-F_LBL = font(f"{FD}/DejaVuSans.ttf", 11)
-F_VAL = font(f"{FD}/DejaVuSans-Bold.ttf", 17)
-F_VAL_SM = font(f"{FD}/DejaVuSans-Bold.ttf", 15)
-F_SMALL = font(f"{FD}/DejaVuSans.ttf", 11)
-F_TINY = font(f"{FD}/DejaVuSans.ttf", 9)
-F_MRZ = font(f"{FD}/DejaVuSansMono.ttf", 17)
-F_SIG = font(f"{FL}/LiberationSerif-Italic.ttf", 24)
-F_STAMP = font(f"{FD}/DejaVuSans-Bold.ttf", 13)
-F_STAMP_SM = font(f"{FD}/DejaVuSans-Bold.ttf", 10)
-F_STAMP_T = font(f"{FD}/DejaVuSans.ttf", 9)
-
-PAPER = (247, 242, 226)
-PAPER2 = (242, 236, 216)
-INK = (24, 38, 66)
-NAVY = (18, 48, 88)
-GOLD = (166, 124, 52)
-GREY = (96, 92, 80)
-RULE = (150, 140, 118)
-PHOTO_BG = (206, 214, 220)
+def load(path, size):
+    """Load a TTF, falling back to Pillow's built-in bitmap font."""
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default()
 
 
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+# -- type scale -------------------------------------------------------------
+F_BIG = load(f"{DEJAVU}/DejaVuSerif-Bold.ttf", 19)
+F_MID = load(f"{DEJAVU}/DejaVuSerif-Bold.ttf", 15)
+F_CAP = load(f"{DEJAVU}/DejaVuSans-Bold.ttf", 13)
+F_LAB = load(f"{DEJAVU}/DejaVuSans.ttf", 11)
+F_DAT = load(f"{DEJAVU}/DejaVuSans-Bold.ttf", 17)
+F_DAT2 = load(f"{DEJAVU}/DejaVuSans-Bold.ttf", 15)
+F_TXT = load(f"{DEJAVU}/DejaVuSans.ttf", 11)
+F_MIN = load(f"{DEJAVU}/DejaVuSans.ttf", 9)
+F_MRZ = load(f"{DEJAVU}/DejaVuSansMono.ttf", 17)
+F_SIGN = load(f"{LIBER}/LiberationSerif-Italic.ttf", 25)
+F_ST = load(f"{DEJAVU}/DejaVuSans-Bold.ttf", 13)
+F_ST2 = load(f"{DEJAVU}/DejaVuSans-Bold.ttf", 10)
+F_ST3 = load(f"{DEJAVU}/DejaVuSans.ttf", 9)
+F_ST4 = load(f"{DEJAVU}/DejaVuSans.ttf", 8)
+
+# -- palette ----------------------------------------------------------------
+CREAM = (248, 243, 228)
+CREAM_R = (243, 237, 217)
+COVER = (56, 50, 42)
+INK = (26, 40, 68)
+NAVY = (20, 50, 90)
+GILT = (168, 126, 54)
+MUTE = (98, 94, 82)
+RULE_C = (152, 142, 120)
+SKY = (207, 215, 221)
 
 
-def rr(d, box, r, **kw):
-    d.rounded_rectangle([int(v) for v in box], radius=int(r), **kw)
+def shade(c1, c2, t):
+    return tuple(round(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 
-def wrap(d, text, fnt, width):
-    lines, cur = [], ""
-    for w in text.split():
-        trial = f"{cur} {w}".strip()
-        if d.textlength(trial, font=fnt) <= width:
+def text_lines(draw, text, font, width):
+    """Greedy word wrap, returns a list of lines fitting `width`."""
+    out, cur = [], ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if draw.textlength(trial, font=font) <= width:
             cur = trial
         else:
             if cur:
-                lines.append(cur)
-            cur = w
+                out.append(cur)
+            cur = word
     if cur:
-        lines.append(cur)
-    return lines
+        out.append(cur)
+    return out
 
 
-# ---------------------------------------------------------------- ICAO MRZ
-def check_digit(s):
-    weights = (7, 3, 1)
+# -- ICAO machine-readable zone ---------------------------------------------
+def icao_check(field):
+    """TD3 check digit: values A=10..Z=35, '<'=0, weights 7/3/1."""
     total = 0
-    for i, ch in enumerate(s):
+    for i, ch in enumerate(field):
         if ch == "<":
-            v = 0
+            val = 0
         elif ch.isdigit():
-            v = int(ch)
+            val = int(ch)
         else:
-            v = ord(ch) - 55  # A=10 .. Z=35
-        total += v * weights[i % 3]
+            val = ord(ch) - 55
+        total += val * (7, 3, 1)[i % 3]
     return str(total % 10)
 
 
-def mrz_lines():
-    line1 = "P<KLDHALVORSEN<<INGRID<MARIE"
-    line1 = line1 + "<" * (44 - len(line1))
-    doc = "0048217<<"
-    doc_cd = check_digit(doc)
-    dob = "940314"
-    dob_cd = check_digit(dob)
-    exp = "360601"
-    exp_cd = check_digit(exp)
-    personal = "<" * 14
-    personal_cd = check_digit(personal)
-    body = doc + doc_cd + "KLD" + dob + dob_cd + "F" + exp + exp_cd + personal + personal_cd
-    body_cd = check_digit(body)
-    line2 = body + body_cd
-    assert len(line1) == 44 and len(line2) == 44, (len(line1), len(line2))
-    return line1, line2
+def mrz_pair():
+    top = "P<KLDHALVORSEN<<INGRID<MARIE"
+    top = top + "<" * (44 - len(top))
+    doc = "0048217<<"                       # document number + filler
+    dob, sex, exp = "940314", "F", "360601"  # 14 Mar 1994 / 01 Jun 2036
+    optional = "<" * 14
+    line2 = (doc + icao_check(doc) + "KLD" + dob + icao_check(dob)
+             + sex + exp + icao_check(exp) + optional + icao_check(optional))
+    # Composite check digit (ICAO 9303): over doc+cd, dob+cd, exp+cd,
+    # optional+cd only -- nationality and sex are NOT part of it.
+    composite = (doc + icao_check(doc) + dob + icao_check(dob)
+                 + exp + icao_check(exp) + optional + icao_check(optional))
+    bottom = line2 + icao_check(composite)
+    assert len(top) == 44 and len(bottom) == 44
+    return top, bottom
 
 
-# ---------------------------------------------------------------- portrait
-def draw_portrait(d, x0, y0, x1, y1):
-    """Front-facing passport portrait, flat shaded vector style."""
+# -- coat of arms ------------------------------------------------------------
+def crest(draw, cx, cy, s):
+    """Shield with three sea-waves under a four-point north star."""
+    pts = [(cx - s, cy - s), (cx + s, cy - s), (cx + s, cy + s * 0.45),
+           (cx, cy + s * 1.2), (cx - s, cy + s * 0.45)]
+    draw.polygon(pts, outline=GILT, width=3)
+    inner = [(cx - s + 5, cy - s + 5), (cx + s - 5, cy - s + 5),
+             (cx + s - 5, cy + s * 0.45 - 2), (cx, cy + s - 5),
+             (cx - s + 5, cy + s * 0.45 - 2)]
+    draw.polygon(inner, fill=(229, 233, 239))
+    for k, wy in enumerate((-0.3, 0.05, 0.4)):
+        wave = [(x, cy + s * wy + 3 * math.sin((x - cx) / 9.0 + k))
+                for x in range(cx - s + 9, cx + s - 7, 4)]
+        draw.line(wave, fill=NAVY, width=2)
+    draw.polygon([(cx, cy - s), (cx + 3, cy - s * 0.66), (cx, cy - s * 0.48),
+                  (cx - 3, cy - s * 0.66)], fill=GILT)
+
+
+def guilloche(draw, x0, y0, x1, y1, colour, gap=7):
+    """Faint wavy security print."""
+    for yy in range(y0, y1, gap):
+        pts = [(x, yy + 2 * math.sin((x - x0) / 44.0))
+               for x in range(x0, x1 + 1, 8)]
+        draw.line(pts, fill=colour, width=1)
+
+
+# -- portrait ----------------------------------------------------------------
+def photo(draw, x0, y0, x1, y1):
+    """Flat vector passport portrait: woman, centre-parted dark hair,
+    navy coat, plain grey-blue backdrop."""
     cx = (x0 + x1) // 2
-    pw, ph = x1 - x0, y1 - y0
-    # photo background: soft vertical gradient
+    w, h = x1 - x0, y1 - y0
     for y in range(y0, y1):
-        t = (y - y0) / max(1, ph)
-        d.line([(x0, y), (x1, y)], fill=lerp((214, 221, 226), (186, 196, 205), t))
-    skin = (216, 172, 136)
-    skin_d = (198, 152, 118)
-    skin_l = (228, 188, 152)
-    hair_c = (88, 52, 34)
-    hair_d = (66, 38, 24)
-    coat = (38, 52, 78)
-    # shoulders / coat
-    d.pieslice([cx - 88, y1 - 118, cx + 88, y1 + 40], start=180, end=360, fill=coat)
-    d.rectangle([x0, y1 - 42, x1, y1], fill=coat)
-    # shirt V + collar
-    d.polygon([(cx - 26, y1 - 52), (cx + 26, y1 - 52), (cx, y1 - 8)], fill=(240, 238, 230))
-    d.polygon([(cx - 30, y1 - 58), (cx - 8, y1 - 34), (cx - 2, y1 - 52)], fill=(226, 224, 216))
-    d.polygon([(cx + 30, y1 - 58), (cx + 8, y1 - 34), (cx + 2, y1 - 52)], fill=(226, 224, 216))
+        t = (y - y0) / max(1, h)
+        draw.line([(x0, y), (x1, y)], fill=shade((216, 223, 228), (184, 194, 204), t))
+    skin, skin_d, skin_l = (217, 173, 137), (199, 153, 119), (229, 189, 153)
+    hair, hair_d = (90, 54, 36), (68, 40, 26)
+    coat = (40, 54, 80)
+    # coat and shoulders
+    draw.pieslice([cx - 90, y1 - 120, cx + 90, y1 + 42], 180, 360, fill=coat)
+    draw.rectangle([x0, y1 - 44, x1, y1], fill=coat)
+    # white shirt V and collar
+    draw.polygon([(cx - 27, y1 - 54), (cx + 27, y1 - 54), (cx, y1 - 6)],
+                 fill=(241, 239, 231))
+    draw.polygon([(cx - 31, y1 - 60), (cx - 9, y1 - 35), (cx - 2, y1 - 54)],
+                 fill=(227, 225, 217))
+    draw.polygon([(cx + 31, y1 - 60), (cx + 9, y1 - 35), (cx + 2, y1 - 54)],
+                 fill=(227, 225, 217))
     # neck
-    d.rectangle([cx - 20, y1 - 108, cx + 20, y1 - 52], fill=skin_d)
-    d.rectangle([cx - 20, y1 - 108, cx + 20, y1 - 96], fill=(190, 144, 110))
+    draw.rectangle([cx - 21, y1 - 110, cx + 21, y1 - 54], fill=skin_d)
+    draw.rectangle([cx - 21, y1 - 110, cx + 21, y1 - 97], fill=(191, 145, 111))
     # head
-    hx0, hy0, hx1, hy1 = cx - 52, y0 + 26, cx + 52, y0 + 148
-    d.ellipse([hx0, hy0, hx1, hy1], fill=skin)
-    # soft cheek shading
-    d.ellipse([hx0 + 6, hy0 + 62, hx0 + 34, hy0 + 96], fill=skin_l)
-    d.ellipse([hx1 - 34, hy0 + 62, hx1 - 6, hy0 + 96], fill=skin_l)
+    hx0, hy0, hx1, hy1 = cx - 53, y0 + 28, cx + 53, y0 + 150
+    # hair mass behind the head, falling to the shoulders
+    draw.pieslice([hx0 - 12, hy0 - 18, hx1 + 12, hy0 + 80], 180, 360, fill=hair)
+    draw.rounded_rectangle([hx0 - 11, hy0 + 56, hx0 - 3, y0 + 168], radius=4, fill=hair)
+    draw.rounded_rectangle([hx1 + 3, hy0 + 56, hx1 + 11, y0 + 168], radius=4, fill=hair)
+    draw.ellipse([hx0, hy0, hx1, hy1], fill=skin)
+    # cheek light
+    draw.ellipse([hx0 + 7, hy0 + 64, hx0 + 35, hy0 + 98], fill=skin_l)
+    draw.ellipse([hx1 - 35, hy0 + 64, hx1 - 7, hy0 + 98], fill=skin_l)
     # ears
-    d.ellipse([hx0 - 8, hy0 + 58, hx0 + 6, hy0 + 88], fill=skin)
-    d.ellipse([hx1 - 6, hy0 + 58, hx1 + 8, hy0 + 88], fill=skin)
-    # hair: back mass behind head, then fringe
-    d.pieslice([hx0 - 10, hy0 - 16, hx1 + 10, hy0 + 78], start=180, end=360, fill=hair_c)
-    d.rounded_rectangle([hx0 - 8, hy0 + 52, hx0 + 8, y0 + 166], radius=8, fill=hair_c)
-    d.rounded_rectangle([hx1 - 8, hy0 + 52, hx1 + 8, y0 + 166], radius=8, fill=hair_c)
-    # fringe sweep
-    d.pieslice([hx0 - 6, hy0 - 10, hx1 + 6, hy0 + 66], start=180, end=330, fill=hair_c)
-    d.pieslice([hx0 - 6, hy0 - 10, hx1 + 6, hy0 + 66], start=195, end=345, fill=hair_d)
-    # centre part line
-    d.line([(cx, hy0 + 2), (cx, hy0 + 26)], fill=hair_d, width=2)
-    # eyebrows
-    d.arc([cx - 34, hy0 + 56, cx - 8, hy0 + 72], start=200, end=340, fill=(70, 44, 30), width=3)
-    d.arc([cx + 8, hy0 + 56, cx + 34, hy0 + 72], start=200, end=340, fill=(70, 44, 30), width=3)
-    # eyes
-    for ex in (cx - 21, cx + 21):
-        d.ellipse([ex - 11, hy0 + 74, ex + 11, hy0 + 88], fill=(245, 242, 236))
-        d.ellipse([ex - 5, hy0 + 75, ex + 5, hy0 + 87], fill=(96, 66, 44))
-        d.ellipse([ex - 2, hy0 + 78, ex + 2, hy0 + 84], fill=(20, 16, 14))
-        d.ellipse([ex + 2, hy0 + 76, ex + 5, hy0 + 79], fill=(255, 255, 255))
-        d.line([(ex - 11, hy0 + 76), (ex + 11, hy0 + 76)], fill=(70, 44, 30), width=2)
-    # nose
-    d.line([(cx + 1, hy0 + 88), (cx - 2, hy0 + 108)], fill=skin_d, width=2)
-    d.arc([cx - 6, hy0 + 104, cx + 8, hy0 + 114], start=0, end=180, fill=skin_d, width=2)
-    # lips: calm, closed
-    d.arc([cx - 13, hy0 + 116, cx + 13, hy0 + 130], start=0, end=180, fill=(164, 96, 84), width=2)
-    d.line([(cx - 12, hy0 + 123), (cx + 12, hy0 + 123)], fill=(150, 84, 74), width=2)
-    # jaw shading
-    d.arc([hx0 + 8, hy0 + 96, hx1 - 8, hy1 - 2], start=20, end=160, fill=skin_d, width=2)
+    draw.ellipse([hx0 - 9, hy0 + 60, hx0 + 7, hy0 + 90], fill=skin)
+    draw.ellipse([hx1 - 7, hy0 + 60, hx1 + 9, hy0 + 90], fill=skin)
+    # fringe, swept to the sides from a centre part
+    draw.pieslice([hx0 - 7, hy0 - 12, hx1 + 7, hy0 + 68], 180, 332, fill=hair)
+    draw.pieslice([hx0 - 7, hy0 - 12, hx1 + 7, hy0 + 68], 196, 346, fill=hair_d)
+    draw.line([(cx, hy0 + 2), (cx, hy0 + 28)], fill=hair_d, width=2)
+    # brows
+    draw.arc([cx - 35, hy0 + 58, cx - 9, hy0 + 74], 200, 340, fill=(72, 46, 32), width=3)
+    draw.arc([cx + 9, hy0 + 58, cx + 35, hy0 + 74], 200, 340, fill=(72, 46, 32), width=3)
+    # eyes: white, iris, pupil, highlight, and a short lash arc above
+    for ex in (cx - 22, cx + 22):
+        draw.ellipse([ex - 11, hy0 + 76, ex + 11, hy0 + 90], fill=(246, 243, 237))
+        draw.ellipse([ex - 5, hy0 + 77, ex + 5, hy0 + 89], fill=(98, 68, 46))
+        draw.ellipse([ex - 2, hy0 + 80, ex + 2, hy0 + 86], fill=(22, 18, 16))
+        draw.ellipse([ex + 2, hy0 + 78, ex + 5, hy0 + 81], fill=(255, 255, 255))
+        draw.arc([ex - 11, hy0 + 72, ex + 11, hy0 + 86], 200, 340,
+                 fill=(72, 46, 32), width=2)
+    # nose and mouth: one gentle closed-lip curve
+    draw.line([(cx + 1, hy0 + 90), (cx - 2, hy0 + 110)], fill=skin_d, width=2)
+    draw.arc([cx - 6, hy0 + 106, cx + 8, hy0 + 116], 0, 180, fill=skin_d, width=2)
+    draw.arc([cx - 13, hy0 + 118, cx + 13, hy0 + 132], 0, 180, fill=(166, 98, 86), width=2)
+    draw.arc([hx0 + 9, hy0 + 98, hx1 - 9, hy1 - 2], 20, 160, fill=skin_d, width=2)
 
 
-# ---------------------------------------------------------------- stamps
-def stamp_circle(d, cx, cy, r, ink, lines_top, lines_mid, lines_bot, rot=0):
-    """Circular entry/exit stamp, drawn on its own layer for alpha + tilt."""
-    size = int(r * 2 + 24)
-    lay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(lay)
+# -- rubber stamps ------------------------------------------------------------
+def round_stamp(img, cx, cy, r, ink, top, mid, bot, tilt=0):
+    """Circular border-control stamp, drawn on a transparent layer and
+    rotated so it sits slightly askew like a real hand stamp."""
+    size = r * 2 + 26
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    col = ink + (212,)
     c = size // 2
-    col = ink + (215,)
     ld.ellipse([c - r, c - r, c + r, c + r], outline=col, width=3)
     ld.ellipse([c - r + 9, c - r + 9, c + r - 9, c + r - 9], outline=col, width=1)
-    y = c - r + 16
-    for ln, fnt in lines_top:
-        w = ld.textlength(ln, font=fnt)
-        ld.text((c - w / 2, y), ln, font=fnt, fill=col)
-        y += 13
-    for ln, fnt in lines_mid:
-        w = ld.textlength(ln, font=fnt)
-        ld.text((c - w / 2, y), ln, font=fnt, fill=col)
-        y += 15
-    for ln, fnt in lines_bot:
-        w = ld.textlength(ln, font=fnt)
-        ld.text((c - w / 2, y), ln, font=fnt, fill=col)
-        y += 13
-    lay = lay.rotate(rot, resample=Image.BICUBIC, center=(c, c))
-    return lay, (cx - size // 2, cy - size // 2)
+    y = c - r + 20
+    for lines, step in ((top, 13), (mid, 15), (bot, 13)):
+        for txt, fnt in lines:
+            use = fnt
+            # Top lines sit near the circle's edge, where the chord is
+            # narrow: shrink the font until the line fits inside it.
+            if lines is top:
+                dy = abs((y + 6) - c)
+                chord = 2 * math.sqrt(max(1, r * r - dy * dy)) - 8
+                for cand in (F_ST, F_ST2, F_ST3, F_ST4):
+                    if ld.textlength(txt, font=cand) <= chord:
+                        use = cand
+                        break
+                else:
+                    use = F_ST4
+            tw = ld.textlength(txt, font=use)
+            ld.text((c - tw / 2, y), txt, font=use, fill=col)
+            y += step
+    layer = layer.rotate(tilt, resample=Image.BICUBIC, center=(c, c))
+    img.paste(layer, (cx - size // 2, cy - size // 2), layer)
 
 
-def stamp_rect(d, x, y, w, h, ink, title, rows, rot=0):
-    size_w, size_h = w + 24, h + 24
-    lay = Image.new("RGBA", (size_w, size_h), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(lay)
-    col = ink + (215,)
-    ld.rectangle([10, 10, 10 + w, 10 + h], outline=col, width=3)
-    ld.line([(10, 34), (10 + w, 34)], fill=col, width=1)
-    tw = ld.textlength(title, font=F_STAMP)
-    ld.text((10 + (w - tw) / 2, 14), title, font=F_STAMP, fill=col)
-    yy = 42
-    for ln in rows:
-        tw = ld.textlength(ln, font=F_STAMP_SM)
-        ld.text((10 + (w - tw) / 2, yy), ln, font=F_STAMP_SM, fill=col)
+def box_stamp(img, x, y, w, h, ink, title, rows, tilt=0):
+    layer = Image.new("RGBA", (w + 26, h + 26), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    col = ink + (212,)
+    ld.rectangle([11, 11, 11 + w, 11 + h], outline=col, width=3)
+    ld.line([(11, 35), (11 + w, 35)], fill=col, width=1)
+    title_fnt = F_ST
+    for cand in (F_ST, F_ST2, F_ST3):
+        if ld.textlength(title, font=cand) <= w - 10:
+            title_fnt = cand
+            break
+    tw = ld.textlength(title, font=title_fnt)
+    ld.text((11 + (w - tw) / 2, 15), title, font=title_fnt, fill=col)
+    yy = 43
+    for row in rows:
+        tw = ld.textlength(row, font=F_ST2)
+        ld.text((11 + (w - tw) / 2, yy), row, font=F_ST2, fill=col)
         yy += 15
-    lay = lay.rotate(rot, resample=Image.BICUBIC)
-    return lay, (x - 12, y - 12)
+    layer = layer.rotate(tilt, resample=Image.BICUBIC)
+    img.paste(layer, (x - 13, y - 13), layer)
 
 
-def guilloche(d, x0, y0, x1, y1, color, step=7):
-    """Fine wavy security lines, very light."""
-    for yy in range(y0, y1, step):
-        pts = []
-        for x in range(x0, x1 + 1, 8):
-            pts.append((x, yy + 2 * math.sin((x - x0) / 46.0)))
-        d.line(pts, fill=color, width=1)
-
-
-def emblem(d, cx, cy, s):
-    """Coat of arms: shield with three waves and a north star."""
-    # shield
-    d.polygon([(cx - s, cy - s), (cx + s, cy - s), (cx + s, cy + s * 0.4),
-               (cx, cy + s * 1.15), (cx - s, cy + s * 0.4)], outline=GOLD, width=3)
-    d.polygon([(cx - s + 5, cy - s + 5), (cx + s - 5, cy - s + 5),
-               (cx + s - 5, cy + s * 0.4 - 2), (cx, cy + s - 4),
-               (cx - s + 5, cy + s * 0.4 - 2)], fill=(228, 232, 238))
-    # waves
-    for i, wy in enumerate((cy - s * 0.25, cy + s * 0.1, cy + s * 0.45)):
-        pts = []
-        for x in range(cx - s + 8, cx + s - 6, 4):
-            pts.append((x, wy + 3 * math.sin((x - cx) / 9.0 + i)))
-        d.line(pts, fill=NAVY, width=2)
-    # north star
-    d.polygon([(cx, cy - s * 0.95), (cx + 3, cy - s * 0.62), (cx, cy - s * 0.45),
-               (cx - 3, cy - s * 0.62)], fill=GOLD)
-
-
-# ---------------------------------------------------------------- build
+# -- the spread ---------------------------------------------------------------
 def build():
-    img = Image.new("RGB", (W, H), (58, 52, 44))
+    img = Image.new("RGB", (SIZE, SIZE), COVER)
     d = ImageDraw.Draw(img)
-    # spread: two cream pages with a centre gutter
-    d.rectangle([6, 6, 1018, 1018], fill=PAPER)
-    d.rectangle([6, 6, 508, 1018], fill=PAPER)
-    d.rectangle([516, 6, 1018, 1018], fill=PAPER2)
-    d.rectangle([508, 6, 516, 1018], fill=(120, 110, 92))
-    d.line([(512, 6), (512, 1018)], fill=(90, 82, 66), width=1)
+    # two cream leaves, dark gutter between them
+    d.rectangle([6, 6, 1018, 1018], fill=CREAM)
+    d.rectangle([6, 6, 508, 1018], fill=CREAM)
+    d.rectangle([516, 6, 1018, 1018], fill=CREAM_R)
+    d.rectangle([508, 6, 516, 1018], fill=(122, 112, 94))
+    d.line([(512, 6), (512, 1018)], fill=(92, 84, 68), width=1)
 
-    # ================= LEFT PAGE: data page =================
-    # header
-    d.text((34, 26), "REPUBLIC OF THE KALDEN ISLES", font=F_TITLE, fill=NAVY)
-    d.text((34, 60), "VEGABRÉF  ·  PASSPORT  ·  PASSEPORT", font=F_SUB, fill=GOLD)
-    d.line([(34, 88), (484, 88)], fill=RULE, width=2)
-    emblem(d, 458, 50, 20)
+    # =============== LEFT LEAF: DATA PAGE ===============
+    d.text((34, 26), "REPUBLIC OF THE KALDEN ISLES", font=F_BIG, fill=NAVY)
+    d.text((34, 61), "VEGABRÉF  ·  PASSPORT  ·  PASSEPORT", font=F_MID, fill=GILT)
+    d.line([(34, 89), (484, 89)], fill=RULE_C, width=2)
+    crest(d, 462, 50, 18)
 
-    # type / code / number row
-    d.text((34, 100), "TYPE / TEGUND", font=F_LBL, fill=GREY)
-    d.text((34, 114), "P", font=F_VAL, fill=INK)
-    d.text((150, 100), "CODE / LAND", font=F_LBL, fill=GREY)
-    d.text((150, 114), "KLD", font=F_VAL, fill=INK)
-    d.text((280, 100), "PASSPORT No. / NÚMER", font=F_LBL, fill=GREY)
-    d.text((280, 114), "0048217", font=F_VAL, fill=INK)
+    # type / code / number
+    for x, lab, val in ((34, "TYPE / TEGUND", "P"),
+                        (150, "CODE / LAND", "KLD"),
+                        (282, "PASSPORT No. / NÚMER", "0048217")):
+        d.text((x, 101), lab, font=F_LAB, fill=MUTE)
+        d.text((x, 115), val, font=F_DAT, fill=INK)
 
-    # portrait photo
-    px0, py0, px1, py1 = 34, 150, 204, 372
-    draw_portrait(d, px0, py0, px1, py1)
-    d.rectangle([px0, py0, px1, py1], outline=INK, width=2)
-    d.text((px0, py1 + 6), "PHOTO / MYND", font=F_TINY, fill=GREY)
+    # portrait
+    photo(d, 34, 152, 206, 374)
+    d.rectangle([34, 152, 206, 374], outline=INK, width=2)
+    d.text((34, 380), "PHOTO / MYND", font=F_MIN, fill=MUTE)
 
-    # ghost image watermark behind fields (very faint)
-    ghost = Image.new("RGBA", (130, 130), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(ghost)
-    draw_portrait(gd, 8, 0, 122, 130)
+    # faint ghost portrait behind the data fields
+    ghost = Image.new("RGBA", (132, 132), (0, 0, 0, 0))
+    photo(ImageDraw.Draw(ghost), 8, 0, 124, 132)
     ghost.putalpha(ghost.split()[3].point(lambda a: a // 18))
-    img.paste(ghost, (348, 168), ghost)
+    img.paste(ghost, (346, 170), ghost)
     d = ImageDraw.Draw(img)
 
-    # data fields (right of portrait)
+    # data fields
     fields = [
         ("SURNAME / EFTIRNAFN", "HALVORSEN"),
         ("GIVEN NAMES / FORNÖFN", "INGRID MARIE"),
@@ -293,114 +300,109 @@ def build():
         ("PLACE OF BIRTH / FÆÐINGARSTAÐUR", "NORHAVN"),
         ("SEX / KYN", "F"),
     ]
-    y = 150
-    for lbl, val in fields:
-        d.text((224, y), lbl, font=F_LBL, fill=GREY)
-        d.text((224, y + 14), val, font=F_VAL, fill=INK)
+    y = 152
+    for lab, val in fields:
+        d.text((226, y), lab, font=F_LAB, fill=MUTE)
+        d.text((226, y + 14), val, font=F_DAT, fill=INK)
         y += 40
-    # signature
-    d.text((34, 396), "HOLDER'S SIGNATURE / UNDIRSKRIFT", font=F_LBL, fill=GREY)
-    d.text((34, 410), "Ingrid Halvorsen", font=F_SIG, fill=(40, 40, 60))
-    d.line([(34, 444), (300, 444)], fill=RULE, width=1)
+
+    # holder's signature
+    d.text((34, 398), "HOLDER'S SIGNATURE / UNDIRSKRIFT", font=F_LAB, fill=MUTE)
+    d.text((34, 412), "Ingrid Halvorsen", font=F_SIGN, fill=(42, 42, 62))
+    d.line([(34, 446), (302, 446)], fill=RULE_C, width=1)
 
     # issue / expiry / authority
-    d.text((34, 462), "DATE OF ISSUE / ÚTGÁFUDAGUR", font=F_LBL, fill=GREY)
-    d.text((34, 476), "02 JUN 2026", font=F_VAL, fill=INK)
-    d.text((235, 462), "DATE OF EXPIRY / GILDISTÍMI", font=F_LBL, fill=GREY)
-    d.text((235, 476), "01 JUN 2036", font=F_VAL, fill=INK)
-    d.text((34, 506), "AUTHORITY / YFIRVALD", font=F_LBL, fill=GREY)
-    d.text((34, 520), "PASSPORT OFFICE — NORHAVN", font=F_VAL_SM, fill=INK)
+    d.text((34, 464), "DATE OF ISSUE / ÚTGÁFUDAGUR", font=F_LAB, fill=MUTE)
+    d.text((34, 478), "02 JUN 2026", font=F_DAT, fill=INK)
+    d.text((236, 464), "DATE OF EXPIRY / GILDISTÍMI", font=F_LAB, fill=MUTE)
+    d.text((236, 478), "01 JUN 2036", font=F_DAT, fill=INK)
+    d.text((34, 508), "AUTHORITY / YFIRVALD", font=F_LAB, fill=MUTE)
+    d.text((34, 522), "PASSPORT OFFICE — NORHAVN", font=F_DAT2, fill=INK)
 
-    # small authority stamp on data page
-    lay, pos = stamp_circle(d, 448, 546, 46, (30, 80, 160),
-                            [("PASSPORT OFFICE", F_STAMP_T)],
-                            [("NORHAVN", F_STAMP), ("02 JUN 2026", F_STAMP_SM)],
-                            [("KALDEN ISLES", F_STAMP_T)], rot=-8)
-    img.paste(lay, pos, lay)
+    # authority round stamp, overlapping the note line
+    round_stamp(img, 448, 548, 46, (32, 82, 162),
+                [("PASSPORT OFFICE", F_ST3)],
+                [("NORHAVN", F_ST), ("02 JUN 2026", F_ST2)],
+                [("KALDEN ISLES", F_ST3)], tilt=-8)
     d = ImageDraw.Draw(img)
-    d.text((34, 548), "The bearer is a citizen of the Republic of the", font=F_SMALL, fill=INK)
-    d.text((34, 564), "Kalden Isles and is entitled to its protection abroad.", font=F_SMALL, fill=INK)
+    d.text((34, 550), "The bearer is a citizen of the Republic of the", font=F_TXT, fill=INK)
+    d.text((34, 566), "Kalden Isles and is entitled to its protection abroad.",
+           font=F_TXT, fill=INK)
 
-    # MRZ
-    d.rectangle([28, 596, 490, 668], fill=(238, 234, 220))
-    l1, l2 = mrz_lines()
-    d.text((36, 604), l1, font=F_MRZ, fill=INK)
-    d.text((36, 632), l2, font=F_MRZ, fill=INK)
-    d.text((34, 676), "P<KLD  ·  Machine-readable zone — please do not fold", font=F_TINY, fill=GREY)
-    guilloche(d, 28, 700, 490, 760, (200, 192, 168))
-    # page number
-    d.text((470, 986), "2", font=F_SMALL, fill=GREY)
+    # machine-readable zone
+    d.rectangle([28, 598, 490, 670], fill=(239, 235, 221))
+    l1, l2 = mrz_pair()
+    d.text((36, 606), l1, font=F_MRZ, fill=INK)
+    d.text((36, 634), l2, font=F_MRZ, fill=INK)
+    d.text((34, 678), "P<KLD  ·  Machine-readable zone — please do not fold",
+           font=F_MIN, fill=MUTE)
+    guilloche(d, 28, 702, 490, 762, (201, 193, 169))
+    d.text((470, 988), "2", font=F_TXT, fill=MUTE)
 
-    # ================= RIGHT PAGE: visas & stamps =================
-    d.text((544, 26), "VISAS", font=F_TITLE, fill=NAVY)
-    d.text((544, 62), "VEGABRÉF — ENDORSEMENTS & ENTRY STAMPS", font=F_SUB, fill=GOLD)
-    d.line([(544, 88), (994, 88)], fill=RULE, width=2)
+    # =============== RIGHT LEAF: VISAS & STAMPS ===============
+    d.text((544, 26), "VISAS", font=F_BIG, fill=NAVY)
+    d.text((544, 63), "VEGABRÉF — ENDORSEMENTS & ENTRY STAMPS", font=F_MID, fill=GILT)
+    d.line([(544, 89), (994, 89)], fill=RULE_C, width=2)
 
-    # faint watermark emblem
+    # faint crest watermark
     wm = Image.new("RGBA", (300, 300), (0, 0, 0, 0))
-    wd = ImageDraw.Draw(wm)
-    emblem(wd, 150, 150, 90)
+    crest(ImageDraw.Draw(wm), 150, 150, 92)
     wm.putalpha(wm.split()[3].point(lambda a: a // 14))
-    img.paste(wm, (620, 380), wm)
+    img.paste(wm, (620, 382), wm)
     d = ImageDraw.Draw(img)
 
-    # stamps (all after the 02 JUN 2026 issue date)
-    lay, pos = stamp_circle(d, 660, 200, 74, (30, 80, 160),
-                            [("FAROE ISLANDS", F_STAMP)],
-                            [("TÓRSHAVN", F_STAMP), ("ENTRY", F_STAMP_SM)],
-                            [("18 JUL 2026", F_STAMP_SM)], rot=-10)
-    img.paste(lay, pos, lay)
-    lay, pos = stamp_circle(d, 880, 210, 74, (168, 44, 44),
-                            [("ICELAND", F_STAMP)],
-                            [("KEFLAVÍK", F_STAMP), ("ENTRY", F_STAMP_SM)],
-                            [("03 SEP 2026", F_STAMP_SM)], rot=7)
-    img.paste(lay, pos, lay)
-    lay, pos = stamp_rect(d, 580, 300, 200, 108, (36, 96, 66),
-                          "TRANSIT VISA — SVALBARD",
-                          ["Single entry · 30 days", "Valid 21 OCT – 20 NOV 2026",
-                           "Fee paid: 450 kr · No. SV-2214"], rot=-3)
-    img.paste(lay, pos, lay)
-    lay, pos = stamp_circle(d, 890, 380, 66, (30, 80, 160),
-                            [("NORWAY", F_STAMP)],
-                            [("BERGEN", F_STAMP), ("EXIT", F_STAMP_SM)],
-                            [("21 OCT 2026", F_STAMP_SM)], rot=12)
-    img.paste(lay, pos, lay)
-    lay, pos = stamp_circle(d, 660, 500, 66, (112, 62, 140),
-                            [("FERRY TOLL", F_STAMP_SM)],
-                            [("EXEMPT", F_STAMP)],
-                            [("KALDEN ISLES", F_STAMP_T)], rot=-6)
-    img.paste(lay, pos, lay)
-    lay, pos = stamp_rect(d, 790, 470, 200, 96, (168, 44, 44),
-                          "SCOTLAND · ABERDEEN",
-                          ["ENTRY · 12 NOV 2026", "Leave to enter: 90 days"], rot=5)
-    img.paste(lay, pos, lay)
+    # Travel history -- every stamp is dated after the 02 JUN 2026 issue.
+    round_stamp(img, 662, 202, 74, (32, 82, 162),
+                [("FAROE ISLANDS", F_ST)],
+                [("TÓRSHAVN", F_ST), ("ENTRY", F_ST2)],
+                [("18 JUL 2026", F_ST2)], tilt=-10)
+    round_stamp(img, 882, 212, 74, (170, 46, 46),
+                [("ICELAND", F_ST)],
+                [("KEFLAVÍK", F_ST), ("ENTRY", F_ST2)],
+                [("03 SEP 2026", F_ST2)], tilt=7)
+    box_stamp(img, 580, 302, 202, 110, (38, 98, 68),
+              "TRANSIT VISA — SVALBARD",
+              ["Single entry · 30 days", "Valid 21 OCT – 20 NOV 2026",
+               "Fee paid: 450 kr · No. SV-2214"], tilt=-3)
+    round_stamp(img, 892, 382, 66, (32, 82, 162),
+                [("NORWAY", F_ST)],
+                [("BERGEN", F_ST), ("EXIT", F_ST2)],
+                [("21 OCT 2026", F_ST2)], tilt=12)
+    round_stamp(img, 662, 502, 66, (114, 64, 142),
+                [("FERRY TOLL", F_ST2)],
+                [("EXEMPT", F_ST)],
+                [("KALDEN ISLES", F_ST3)], tilt=-6)
+    box_stamp(img, 792, 472, 202, 98, (170, 46, 46),
+              "SCOTLAND · ABERDEEN",
+              ["ENTRY · 12 NOV 2026", "Leave to enter: 90 days"], tilt=5)
 
-    # endorsement block — the telling detail
-    d.rectangle([544, 620, 994, 800], outline=RULE, width=1)
-    d.rectangle([544, 620, 994, 648], fill=(232, 226, 206))
-    d.text((556, 626), "ENDORSEMENT / ÁRITUN", font=F_HEAD, fill=NAVY)
-    end_lines = wrap(d, "The holder is exempt from inter-island ferry tolls "
-                        "within the Kalden Isles. Visa-free travel: Faroe Islands, "
-                        "Iceland, Norway. Holders must declare all catch landed "
-                        "at foreign ports on return.", F_SMALL, 426)
-    yy = 660
-    for ln in end_lines:
-        d.text((556, yy), ln, font=F_SMALL, fill=INK)
+    # endorsement -- the telling detail
+    d.rectangle([544, 622, 994, 772], outline=RULE_C, width=1)
+    d.rectangle([544, 622, 994, 650], fill=(233, 227, 207))
+    d.text((556, 628), "ENDORSEMENT / ÁRITUN", font=F_CAP, fill=NAVY)
+    body = ("The holder is exempt from inter-island ferry tolls within the "
+            "Kalden Isles. Visa-free travel: Faroe Islands, Iceland, Norway. "
+            "Holders must declare all catch landed at foreign ports on return.")
+    yy = 662
+    for ln in text_lines(d, body, F_TXT, 426):
+        d.text((556, yy), ln, font=F_TXT, fill=INK)
         yy += 16
-    d.text((556, yy + 6), "— Passport Office, Norhavn, 02 JUN 2026", font=F_SMALL, fill=INK)
+    d.text((556, yy + 8), "— Passport Office, Norhavn, 02 JUN 2026", font=F_TXT, fill=INK)
 
-    # small archipelago sketch
-    d.text((544, 822), "THE KALDEN ISLES — NORTH ATLANTIC", font=F_HEAD, fill=NAVY)
-    d.line([(544, 842), (994, 842)], fill=RULE, width=1)
-    for (ix, iy, iw) in [(580, 880, 46), (660, 856, 30), (720, 892, 56), (800, 862, 26),
-                         (860, 890, 40), (920, 866, 24)]:
-        d.ellipse([ix, iy, ix + iw, iy + iw // 2], fill=(190, 205, 215), outline=NAVY, width=1)
-    d.ellipse([722, 894, 730, 900], fill=(168, 44, 44))
-    d.text((736, 890), "Norhavn", font=F_SMALL, fill=INK)
-    d.text((544, 940), "Scale 1 : 2 400 000 — surveyed 2024, Hydrographic Office", font=F_TINY, fill=GREY)
-    d.text((960, 986), "3", font=F_SMALL, fill=GREY)
+    # archipelago sketch
+    d.text((544, 800), "THE KALDEN ISLES — NORTH ATLANTIC", font=F_CAP, fill=NAVY)
+    d.line([(544, 820), (994, 820)], fill=RULE_C, width=1)
+    for ix, iy, iw in ((580, 862, 52), (660, 838, 34), (722, 872, 62),
+                       (802, 844, 30), (862, 872, 44), (922, 848, 28)):
+        d.ellipse([ix, iy, ix + iw, iy + iw // 2],
+                  fill=(191, 206, 216), outline=NAVY, width=1)
+    d.ellipse([724, 874, 732, 880], fill=(170, 46, 46))
+    d.text((722, 906), "Norhavn", font=F_TXT, fill=INK)
+    d.text((544, 928), "Scale 1 : 2 400 000 — surveyed 2024, Hydrographic Office",
+           font=F_MIN, fill=MUTE)
+    d.text((962, 988), "3", font=F_TXT, fill=MUTE)
 
-    os.makedirs("/output", exist_ok=True)
+    os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     img.save(OUT, "PNG", optimize=True)
     print("saved", OUT, os.path.getsize(OUT), "bytes")
 
