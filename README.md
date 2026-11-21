@@ -12,7 +12,7 @@ Draws the passport spread of the invented Republic of the Kalden Isles — a dat
 python3 main.py
 ```
 
-Writes `/output/entry.png` (1024×1024 PNG, under 1 MiB). Needs Python 3.13 with Pillow and the DejaVu/Liberation system fonts. Deterministic: fixed geometry, no randomness, no network.
+Writes `/output/entry.png` (1024×1024 PNG, under 1 MiB). Standard library only — no Pillow, no font files, no network: glyphs are rasterised once at build time from the DejaVu/Liberation system fonts by `tools/gen_fonts.py` and embedded in `main.py` as a compressed bitmap blob, and the PNG is encoded by hand. Runs in a bare `python:3.13-slim` image (`python3 -P -s main.py`). Deterministic: fixed geometry, no randomness, no network.
 
 ---
 
